@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Loopback test harness</title>
+<script type="module">
+  import { playStep } from '/src/audio/conductor.ts';
+  import { STEPS, STEP_SECONDS } from '/src/audio/score.ts';
+  import { Synth } from '/src/audio/synth.ts';
+  import { PlannerBot } from '/src/bot/pilots.ts';
+  import { createGame, stateHash, step } from '/src/sim/game.ts';
+  import { decodeReplay, simulateReplay } from '/src/sim/replay.ts';
+
+  window.replayHashes = (codes) => codes.map((code) => stateHash(simulateReplay(decodeReplay(code))));
+
+  /** Renders the music of a real, deep run faster than real time, and measures what comes out. */
+  window.renderMusic = async (loops) => {
+    const g = createGame(4242);
+    const bot = new PlannerBot();
+    while (g.loop < loops && g.phase !== 'over') step(g, bot.next(g));
+
+    const cycles = 3;
+    const rate = 44100;
+    const seconds = cycles * STEPS * STEP_SECONDS + 3;
+    const ctx = new OfflineAudioContext(2, rate * seconds, rate);
+    const synth = new Synth(ctx);
+    for (let cycle = 0; cycle < cycles; cycle++) {
+      for (let s = 0; s < STEPS; s++) playStep(synth, g, s, 0.05 + (cycle * STEPS + s) * STEP_SECONDS);
+    }
+    // The loudest moment the game can produce: every effect landing at once, on top of the band.
+    const when = STEPS * STEP_SECONDS;
+    synth.thud(when);
+    synth.shatter(when, 0);
+    synth.whoosh(when);
+    synth.charged(when);
+    synth.tapeStop(when, 1.6, 0.24);
+
+    const rendered = await ctx.startRendering();
+    let peak = 0;
+    let sum = 0;
+    let nan = 0;
+    let count = 0;
+    for (let channel = 0; channel < rendered.numberOfChannels; channel++) {
+      const samples = rendered.getChannelData(channel);
+      for (let i = 0; i < samples.length; i++) {
+        const value = samples[i];
+        if (Number.isNaN(value)) nan++;
+        peak = Math.max(peak, Math.abs(value));
+        sum += value * value;
+        count++;
+      }
+    }
+    return { echoes: g.echoes.length, loop: g.loop, peak, rms: Math.sqrt(sum / count), nan };
+  };
+
+  window.ready = true;
+</script>
